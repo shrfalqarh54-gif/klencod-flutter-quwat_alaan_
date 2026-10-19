@@ -1,52 +1,44 @@
 class TaskItem {
-  const TaskItem({
-    this.id,
-    required this.title,
-    required this.description,
-    required this.start,
-    required this.end,
-    this.isCompleted = false,
-  });
-
   final int? id;
   final String title;
   final String description;
-  final DateTime start;
-  final DateTime end;
-  final bool isCompleted;
+  final DateTime startAt;
+  final DateTime endAt;
+  final bool completed;
+
+  const TaskItem({
+    this.id,
+    required this.title,
+    this.description = '',
+    required this.startAt,
+    required this.endAt,
+    this.completed = false,
+  });
 
   Map<String, Object?> toMap() => {
-        'id': id,
-        'title': title,
-        'description': description,
-        'start_ms': start.millisecondsSinceEpoch,
-        'end_ms': end.millisecondsSinceEpoch,
-        'is_completed': isCompleted ? 1 : 0,
-      };
+    'id': id,
+    'title': title,
+    'description': description,
+    'start_at': startAt.millisecondsSinceEpoch,
+    'end_at': endAt.millisecondsSinceEpoch,
+    'completed': completed ? 1 : 0,
+  };
 
   factory TaskItem.fromMap(Map<String, Object?> map) => TaskItem(
-        id: map['id'] as int?,
-        title: map['title'] as String,
-        description: (map['description'] as String?) ?? '',
-        start: DateTime.fromMillisecondsSinceEpoch(map['start_ms'] as int),
-        end: DateTime.fromMillisecondsSinceEpoch(map['end_ms'] as int),
-        isCompleted: (map['is_completed'] as int? ?? 0) == 1,
-      );
+    id: map['id'] as int?,
+    title: map['title'] as String,
+    description: (map['description'] as String?) ?? '',
+    startAt: DateTime.fromMillisecondsSinceEpoch(map['start_at'] as int),
+    endAt: DateTime.fromMillisecondsSinceEpoch(map['end_at'] as int),
+    completed: (map['completed'] as int? ?? 0) == 1,
+  );
 
-  TaskItem copyWith({
-    int? id,
-    String? title,
-    String? description,
-    DateTime? start,
-    DateTime? end,
-    bool? isCompleted,
-  }) =>
-      TaskItem(
-        id: id ?? this.id,
-        title: title ?? this.title,
-        description: description ?? this.description,
-        start: start ?? this.start,
-        end: end ?? this.end,
-        isCompleted: isCompleted ?? this.isCompleted,
-      );
+  TaskItem copyWith({int? id, bool? completed}) => TaskItem(
+    id: id ?? this.id,
+    title: title,
+    description: description,
+    startAt: startAt,
+    endAt: endAt,
+    completed: completed ?? this.completed,
+  );
 }

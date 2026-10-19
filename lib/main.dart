@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:timezone/data/latest.dart' as tz;
-
-import 'screens/home_screen.dart';
+import 'package:flutter/services.dart';
+import 'services/task_store.dart';
 import 'services/notification_service.dart';
+import 'screens/home_screen.dart';
 
-Future<void> main() async {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  tz.initializeTimeZones();
-  await NotificationService.instance.initialize();
+  
+  // ضبط اتجاه الشاشة عمودياً
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  // تهيئة الإشعارات والمخزن المحلي
+  await NotificationService.init();
+  await TaskStore.init();
+
   runApp(const QuwatAlaanApp());
 }
 
@@ -18,28 +26,34 @@ class QuwatAlaanApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'قوة الآن',
+      title: 'قوة الآن 💪',
       debugShowCheckedModeBanner: false,
-      locale: const Locale('ar'),
-      supportedLocales: const [Locale('ar'), Locale('en')],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF176B55)),
-        scaffoldBackgroundColor: const Color(0xFFF5F7F6),
-        appBarTheme: const AppBarTheme(centerTitle: false),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2E7D32), // الأخضر الأساسي
+          primary: const Color(0xFF2E7D32),
+          secondary: const Color(0xFF388E3C),
+          surface: Colors.white,
         ),
+        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
+        // تصحيح CardThemeData ليتوافق مع أحدث إصدارات Flutter SDK
+        cardTheme: CardThemeData(
+          elevation: 2,
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+          elevation: 0,
+          backgroundColor: Color(0xFF2E7D32),
+          foregroundColor: Colors.white,
+        ),
+        fontFamily: 'Roboto',
       ),
-      home: const Directionality(
-        textDirection: TextDirection.rtl,
-        child: HomeScreen(),
-      ),
+      home: const HomeScreen(),
     );
   }
 }

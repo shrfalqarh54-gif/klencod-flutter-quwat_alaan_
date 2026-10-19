@@ -1,11 +1,9 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-
 import '../models/task_item.dart';
-import '../services/notification_service.dart';
 import '../services/task_store.dart';
-import 'task_editor.dart';
 import 'assistant_screen.dart';
+import 'task_editor.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,159 +14,220 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<TaskItem> _tasks = [];
-  bool _loading = true;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadTasks();
   }
 
-  Future<void> _load() async {
-    final tasks = await TaskStore.instance.all();
-    if (!mounted) return;
+  void _loadTasks() {
     setState(() {
-      _tasks = tasks;
-      _loading = false;
+      _tasks = TaskStore.getAllTasks();
+      _isLoading = false;
     });
   }
 
-  Future<void> _addTask() async {
-    final result = await Navigator.of(context).push<TaskItem>(
-      MaterialPageRoute(builder: (_) => const TaskEditor()),
-    );
-    if (result == null) return;
-
-    final conflict = _tasks.any((t) =>
-        result.start.isBefore(t.end) && result.end.isAfter(t.start));
-    if (conflict) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('⚠️ هذا الوقت محجوز بمهمة أخرى')),
+  TaskItem? get _currentActiveTask {
+    final now = DateTime.now();
+    try {
+      return _tasks.firstWhere(
+        (task) => !task.isCompleted && task.startTime.isBefore(now) && task.endTime.isAfter(now),
       );
-      return;
+    } catch (_) {
+      return null;
     }
-
-    final id = await TaskStore.instance.insert(result);
-    await NotificationService.instance.scheduleTask(
-      id: id,
-      title: result.title,
-      start: result.start,
-      end: result.end,
-    );
-    await _load();
   }
 
-  Future<void> _toggleCompleted(TaskItem task, bool value) async {
-    await TaskStore.instance.update(task.copyWith(isCompleted: value));
-    await _load();
-  }
-
-  Future<void> _delete(TaskItem task) async {
-    if (task.id != null) {
-      await NotificationService.instance.cancelTask(task.id!);
-      await TaskStore.instance.delete(task.id!);
-      await _load();
+  TaskItem? get _upcomingTask {
+    final now = DateTime.now();
+    try {
+      final upcoming = _tasks.where(
+        (task) => !task.isCompleted && task.startTime.isAfter(now),
+      ).toList();
+      upcoming.sort((a, b) => a.startTime.compareTo(b.startTime));
+      return upcoming.isNotEmpty ? upcoming.first : null;
+    } catch (_) {
+      return null;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final current = _tasks.where((t) =>
-        !t.isCompleted &&
-        !now.isBefore(t.start) &&
-        now.isBefore(t.end)).toList();
-    final next = _tasks.where((t) => t.start.isAfter(now)).toList();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('قوة الآن 💪'),
-        actions: [
-          IconButton(
-            tooltip: 'المساعد',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => AssistantScreen(tasks: _tasks),
-              ),
+    // حل مشكلة Member not found: 'rtl' بشكل قاطع وآمن
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('قوة الآن 💪'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.smart_toy_outlined),
+              tooltip: 'المساعد',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AssistantScreen()),
+                ).then((_) => _loadTasks());
+              },
             ),
-            icon: const Icon(Icons.chat_bubble_outline),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addTask,
-        icon: const Icon(Icons.add),
-        label: const Text('إضافة مهمة'),
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('ماذا أفعل الآن؟',
-                              style: TextStyle(
-                                  fontSize: 22, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 6),
-                          Text(DateFormat('EEEE، d MMMM yyyy', 'ar').format(now)),
-                          Text('الوقت الحالي: ${DateFormat('HH:mm').format(now)}'),
-                          const SizedBox(height: 14),
-                          if (current.isNotEmpty)
-                            Text('المهمة الحالية: ${current.first.title}',
-                                style: const TextStyle(fontSize: 17))
-                          else
-                            const Text('لا توجد مهمة جارية الآن.'),
-                          if (next.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text('المهمة القادمة: ${next.first.title}'),
-                          ],
-                        ],
-                      ),
+          ],
+        ),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : RefreshIndicator(
+                onRefresh: () async => _loadTasks(),
+                child: ListView(
+                  padding: const EdgeInsets.all(16.0),
+                  children: [
+                    _buildNowSection(),
+                    const SizedBox(height: 16),
+                    _buildUpcomingSection(),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'مهام اليوم (${_tasks.length})',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          'المكتملة: ${_tasks.where((t) => t.isCompleted).length}',
+                          style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('جدول المهام',
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  if (_tasks.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 28),
-                      child: Center(child: Text('لم تضف أي مهام بعد. ابدأ بمهمة صغيرة!')),
-                    ),
-                  ..._tasks.map((task) => Card(
-                        child: ListTile(
-                          leading: Checkbox(
-                            value: task.isCompleted,
-                            onChanged: (v) =>
-                                _toggleCompleted(task, v ?? false),
-                          ),
-                          title: Text(task.title),
-                          subtitle: Text(
-                            '${DateFormat('yyyy/MM/dd HH:mm').format(task.start)}\n'
-                            'حتى ${DateFormat('HH:mm').format(task.end)}'
-                            '${task.description.isEmpty ? '' : '\n${task.description}'}',
-                          ),
-                          isThreeLine: true,
-                          trailing: IconButton(
-                            tooltip: 'حذف المهمة',
-                            onPressed: () => _delete(task),
-                            icon: const Icon(Icons.delete_outline),
+                    const Divider(),
+                    if (_tasks.isEmpty)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 40.0),
+                          child: Text(
+                            'لا توجد مهام حالياً. ابدأ بإضافة مهمتك الأولى!',
+                            style: TextStyle(color: Colors.grey, fontSize: 16),
                           ),
                         ),
-                      )),
-                  const SizedBox(height: 80),
-                ],
+                      )
+                    else
+                      ..._tasks.map((task) => _buildTaskCard(task)),
+                  ],
+                ),
               ),
-            ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () async {
+            final result = await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const TaskEditorScreen()),
+            );
+            if (result == true) _loadTasks();
+          },
+          label: const Text('إضافة مهمة'),
+          icon: const Icon(Icons.add),
+          backgroundColor: const Color(0xFF2E7D32),
+          foregroundColor: Colors.white,
+        ),
+      ),
     );
+  }
+
+  Widget _buildNowSection() {
+    final active = _currentActiveTask;
+    return Card(
+      color: active != null ? const Color(0xFFE8F5E9) : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: active != null ? Colors.green : Colors.grey.shade300),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bolt, color: active != null ? Colors.amber.shade800 : Colors.grey),
+                const SizedBox(width: 8),
+                Text(
+                  'ماذا أفعل الآن؟',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (active != null) ...[
+              Text(
+                active.title,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1B5E20)),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'الانتهاء: ${_formatTime(active.endTime)}',
+                style: const TextStyle(color: Colors.black82),
+              ),
+            ] else ...[
+              const Text(
+                'أنت متفرغ الآن! استغل هذا الوقت في الراحة أو التخطيط.',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUpcomingSection() {
+    final upcoming = _upcomingTask;
+    if (upcoming == null) return const SizedBox.shrink();
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.access_time, color: Colors.blue),
+        title: Text('المهمة القادمة: ${upcoming.title}'),
+        subtitle: Text('البدء: ${_formatTime(upcoming.startTime)}'),
+      ),
+    );
+  }
+
+  Widget _buildTaskCard(TaskItem task) {
+    return Card(
+      child: ListTile(
+        leading: Checkbox(
+          value: task.isCompleted,
+          activeColor: const Color(0xFF2E7D32),
+          onChanged: (val) async {
+            task.isCompleted = val ?? false;
+            await TaskStore.saveTask(task);
+            _loadTasks();
+          },
+        ),
+        title: Text(
+          task.title,
+          style: TextStyle(
+            decoration: task.isCompleted ? TextDecoration.lineThrough : null,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        subtitle: Text('${_formatTime(task.startTime)} - ${_formatTime(task.endTime)}'),
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+          onPressed: () async {
+            await TaskStore.deleteTask(task.id);
+            _loadTasks();
+          },
+        ),
+        onTap: () async {
+          final res = await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => TaskEditorScreen(task: task)),
+          );
+          if (res == true) _loadTasks();
+        },
+      ),
+    );
+  }
+
+  String _formatTime(DateTime dt) {
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
