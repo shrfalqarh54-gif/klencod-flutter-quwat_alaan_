@@ -25,6 +25,7 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(true)
                     }
+                    "getTimeZone" -> result.success(java.util.TimeZone.getDefault().id)
                     else -> result.notImplemented()
                 }
             }

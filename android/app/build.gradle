@@ -4,9 +4,16 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// حذف ملف أيقونة تالف يولّده المحرر أحياناً (drawable/ic_launcher.png)
+// الأيقونة الفعلية للتطبيق هي mipmap/ic_launcher
+def brokenIcon = file("src/main/res/drawable/ic_launcher.png")
+if (brokenIcon.exists()) {
+    brokenIcon.delete()
+}
+
 android {
     namespace = "com.quwatalan.app"
-    compileSdk = 34
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -20,9 +27,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.quwatalan.app"
-        minSdk = 21 // متوافق تماماً مع أندرويد 10 (API 29)
-        targetSdk = 34
+        applicationId = "com.quwatalan.app2"
+        minSdk = 21
+        targetSdk = 28
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled true

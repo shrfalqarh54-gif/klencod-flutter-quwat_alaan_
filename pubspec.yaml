@@ -18,6 +18,7 @@ dependencies:
   timezone: ^0.9.4
   provider: ^6.1.2
   shared_preferences: ^2.3.2
+  speech_to_text: ^7.0.0
 
 dev_dependencies:
   flutter_test:

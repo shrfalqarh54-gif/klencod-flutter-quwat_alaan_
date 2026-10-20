@@ -1,71 +1,83 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/task_item.dart';
-import 'notification_service.dart';
 
-class TaskStore extends ChangeNotifier {
-  Database? _db;
-  List<TaskItem> _tasks = [];
-  List<TaskItem> get tasks => List.unmodifiable(_tasks);
+class TaskStore {
+  static const String _key = 'quwat_alaan_tasks_data';
+  static SharedPreferences? _prefs;
+  static List<TaskItem> _tasks = [];
 
-  Future<void> initialize() async {
-    final path = p.join(await getDatabasesPath(), 'quwat_alaan.db');
-    _db = await openDatabase(
-      path,
-      version: 1,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            start_at INTEGER NOT NULL,
-            end_at INTEGER NOT NULL,
-            completed INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-      },
-    );
-    await reload();
+  /// يزداد عند أي تغيير ليحدّث الواجهات المستمعة.
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
+
+  static Future<void> init() async {
+    _prefs = await SharedPreferences.getInstance();
+    _load();
   }
 
-  Future<void> reload() async {
-    final rows = await _db!.query('tasks', orderBy: 'start_at ASC');
-    _tasks = rows.map(TaskItem.fromMap).toList();
-    notifyListeners();
+  /// إعادة القراءة من القرص (مثلاً بعد تعديل من الخلفية).
+  static Future<void> reload() async {
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs?.reload();
+    _load();
+    changes.value++;
   }
 
-  Future<String?> addTask(TaskItem task) async {
-    if (task.title.trim().isEmpty) return 'اكتب اسم المهمة أولًا.';
-    if (!task.endAt.isAfter(task.startAt)) return 'وقت النهاية يجب أن يكون بعد البداية.';
-    final conflict = _tasks.any((t) =>
-      !t.completed &&
-      task.startAt.isBefore(t.endAt) &&
-      task.endAt.isAfter(t.startAt));
-    if (conflict) return '⚠️ هذا الوقت محجوز. غيّر الموعد قبل الحفظ.';
-    final id = await _db!.insert('tasks', task.toMap()..remove('id'));
-    final saved = task.copyWith(id: id);
-    try {
-      await NotificationService.instance.scheduleTask(saved);
-    } catch (_) {
-      // Keep the task saved even if notification scheduling is restricted.
+  static void _load() {
+    final raw = _prefs?.getString(_key);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final List<dynamic> decoded = jsonDecode(raw);
+        _tasks = decoded.map((e) => TaskItem.fromMap(Map<String, dynamic>.from(e))).toList();
+      } catch (_) {
+        _tasks = [];
+      }
+    } else {
+      _tasks = [];
     }
-    await reload();
+  }
+
+  static List<TaskItem> getAllTasks() {
+    return List.unmodifiable(_tasks);
+  }
+
+  static TaskItem? getById(String id) {
+    for (final t in _tasks) {
+      if (t.id == id) return t;
+    }
     return null;
   }
 
-  Future<void> toggleCompleted(TaskItem task) async {
-    final updated = task.copyWith(completed: !task.completed);
-    await _db!.update('tasks', updated.toMap()..remove('id'),
-      where: 'id = ?', whereArgs: [task.id]);
-    await reload();
+  static Future<void> saveTask(TaskItem task) async {
+    final index = _tasks.indexWhere((t) => t.id == task.id);
+    if (index >= 0) {
+      _tasks[index] = task;
+    } else {
+      _tasks.add(task);
+    }
+    await _persist();
+    changes.value++;
   }
 
-  Future<void> deleteTask(TaskItem task) async {
-    await NotificationService.instance.cancelTask(task.id!);
-    await _db!.delete('tasks', where: 'id = ?', whereArgs: [task.id]);
-    await reload();
+  static Future<void> deleteTask(String id) async {
+    _tasks.removeWhere((t) => t.id == id);
+    await _persist();
+    changes.value++;
+  }
+
+  /// تعليم المهمة كمنجزة في اليوم المحدد (تُستخدم من زر الإشعار).
+  static Future<bool> markDone(String id, DateTime day) async {
+    final task = getById(id);
+    if (task == null) return false;
+    task.setDoneOn(day, true);
+    await saveTask(task);
+    return true;
+  }
+
+  static Future<void> _persist() async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final data = jsonEncode(_tasks.map((t) => t.toMap()).toList());
+    await _prefs?.setString(_key, data);
   }
 }

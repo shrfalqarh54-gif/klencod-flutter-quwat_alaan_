@@ -1,91 +1,281 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-
+import '../models/sub_task.dart';
 import '../models/task_item.dart';
 import '../services/task_store.dart';
+import '../services/notification_service.dart';
 
-class TaskEditor extends StatefulWidget {
-  const TaskEditor({super.key});
-  @override
-  State<TaskEditor> createState() => _TaskEditorState();
+class _SubEdit {
+  final String id;
+  final TextEditingController controller;
+  bool done;
+
+  _SubEdit({required this.id, required String title, this.done = false})
+      : controller = TextEditingController(text: title);
 }
 
-class _TaskEditorState extends State<TaskEditor> {
-  final _formKey = GlobalKey<FormState>();
-  final _title = TextEditingController();
-  final _description = TextEditingController();
-  DateTime _date = DateTime.now();
-  TimeOfDay _start = TimeOfDay.now();
-  TimeOfDay _end = TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1)));
+class TaskEditorScreen extends StatefulWidget {
+  final TaskItem? task;
 
-  DateTime _combine(TimeOfDay t) => DateTime(_date.year, _date.month, _date.day, t.hour, t.minute);
+  const TaskEditorScreen({super.key, this.task});
+
+  @override
+  State<TaskEditorScreen> createState() => _TaskEditorScreenState();
+}
+
+class _TaskEditorScreenState extends State<TaskEditorScreen> {
+  final _formKey = GlobalKey<FormState>();
+  late TextEditingController _titleController;
+  late TextEditingController _descController;
+  late DateTime _startTime;
+  late DateTime _endTime;
+  late Recurrence _recurrence;
+  final Set<int> _weekdays = {};
+  final List<_SubEdit> _subs = [];
+  int _subCounter = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    final t = widget.task;
+    _titleController = TextEditingController(text: t?.title ?? '');
+    _descController = TextEditingController(text: t?.description ?? '');
+    _startTime = t?.startTime ?? now.add(const Duration(minutes: 5));
+    _endTime = t?.endTime ?? now.add(const Duration(hours: 1));
+    _recurrence = t?.recurrence ?? Recurrence.none;
+    _weekdays.addAll(t?.weekdays ?? const <int>[]);
+    for (final s in t?.subTasks ?? const <SubTask>[]) {
+      _subs.add(_SubEdit(id: s.id, title: s.title, done: s.isDone));
+    }
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descController.dispose();
+    for (final s in _subs) {
+      s.controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
 
   Future<void> _pickDate() async {
-    final picked = await showDatePicker(
+    final d = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: _startTime,
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
-      locale: const Locale('ar'),
     );
-    if (picked != null) setState(() => _date = picked);
+    if (d == null) return;
+    setState(() {
+      final dur = _endTime.difference(_startTime);
+      _startTime = DateTime(d.year, d.month, d.day, _startTime.hour, _startTime.minute);
+      _endTime = _startTime.add(dur);
+    });
   }
 
-  Future<void> _pickTime(bool start) async {
-    final picked = await showTimePicker(context: context, initialTime: start ? _start : _end);
-    if (picked != null) setState(() { if (start) { _start = picked; } else { _end = picked; } });
+  Future<void> _pickTime(bool isStart) async {
+    final initial = isStart ? _startTime : _endTime;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return;
+
+    final selected = DateTime(_startTime.year, _startTime.month, _startTime.day, time.hour, time.minute);
+    if (isStart) {
+      var dur = _endTime.difference(_startTime);
+      if (dur.inMinutes <= 0) dur = const Duration(hours: 1);
+      setState(() {
+        _startTime = selected;
+        _endTime = selected.add(dur);
+      });
+    } else {
+      if (!selected.isAfter(_startTime)) {
+        _snack('وقت الانتهاء يجب أن يكون بعد وقت البدء');
+        return;
+      }
+      setState(() => _endTime = selected);
+    }
+  }
+
+  void _addSub() {
+    setState(() {
+      _subCounter++;
+      _subs.add(_SubEdit(
+        id: '${DateTime.now().millisecondsSinceEpoch}_$_subCounter',
+        title: '',
+      ));
+    });
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_recurrence == Recurrence.weekly && _weekdays.isEmpty) {
+      _snack('اختر يوماً واحداً على الأقل للتكرار الأسبوعي');
+      return;
+    }
+
+    final subTasks = _subs
+        .where((s) => s.controller.text.trim().isNotEmpty)
+        .map((s) => SubTask(id: s.id, title: s.controller.text.trim(), isDone: s.done))
+        .toList();
+
+    final item = TaskItem(
+      id: widget.task?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      title: _titleController.text.trim(),
+      description: _descController.text.trim(),
+      startTime: _startTime,
+      endTime: _endTime,
+      isCompleted: widget.task?.isCompleted ?? false,
+      category: widget.task?.category ?? 'عام',
+      recurrence: _recurrence,
+      weekdays: _recurrence == Recurrence.weekly ? (_weekdays.toList()..sort()) : <int>[],
+      subTasks: subTasks,
+      completedDates: List<String>.from(widget.task?.completedDates ?? const <String>[]),
+    );
+
+    await TaskStore.saveTask(item);
+    await NotificationService.scheduleTask(item);
+
+    if (mounted) Navigator.pop(context, true);
   }
 
   @override
-  void dispose() { _title.dispose(); _description.dispose(); super.dispose(); }
-
-  @override
-  Widget build(BuildContext context) => Directionality(
-    textDirection: TextDirection.rtl,
-    child: Scaffold(
-      appBar: AppBar(title: const Text('إضافة مهمة')),
-      body: Form(
-        key: _formKey,
-        child: ListView(padding: const EdgeInsets.all(16), children: [
-          TextFormField(controller: _title, decoration: const InputDecoration(labelText: 'اسم المهمة', border: OutlineInputBorder()),
-            validator: (v) => (v == null || v.trim().isEmpty) ? 'اكتب اسم المهمة' : null),
-          const SizedBox(height: 12),
-          TextField(controller: _description, maxLines: 3, decoration: const InputDecoration(labelText: 'الوصف (اختياري)', border: OutlineInputBorder())),
-          const SizedBox(height: 12),
-          Card(child: ListTile(leading: const Icon(Icons.calendar_month), title: const Text('التاريخ'),
-            subtitle: Text('${_date.day}/${_date.month}/${_date.year}'), onTap: _pickDate)),
-          Card(child: ListTile(leading: const Icon(Icons.alarm), title: const Text('وقت البداية'),
-            subtitle: Text(_start.format(context)), onTap: () => _pickTime(true))),
-          Card(child: ListTile(leading: const Icon(Icons.alarm_on), title: const Text('وقت النهاية'),
-            subtitle: Text(_end.format(context)), onTap: () => _pickTime(false))),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            icon: const Icon(Icons.save),
-            label: const Text('حفظ المهمة'),
-            onPressed: () async {
-              if (!_formKey.currentState!.validate()) return;
-              var start = _combine(_start);
-              var end = _combine(_end);
-              if (!end.isAfter(start)) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('يجب أن تكون النهاية بعد البداية في اليوم نفسه.')));
-                return;
-              }
-              final error = await context.read<TaskStore>().addTask(TaskItem(
-                title: _title.text.trim(),
-                description: _description.text.trim(),
-                startAt: start,
-                endAt: end,
-              ));
-              if (!mounted) return;
-              if (error != null) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-              } else {
-                Navigator.pop(context);
-              }
-            },
-          ),
-        ]),
+  Widget build(BuildContext context) {
+    final isRecurring = _recurrence != Recurrence.none;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.task == null ? 'إضافة مهمة جديدة' : 'تعديل المهمة'),
       ),
-    ),
-  );
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              TextFormField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: 'عنوان المهمة',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (val) => val == null || val.trim().isEmpty ? 'يرجى كتابة العنوان' : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _descController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'تفاصيل إضافية (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                title: Text(isRecurring ? 'يبدأ التكرار من' : 'التاريخ'),
+                subtitle: Text(formatYmd(_startTime)),
+                trailing: const Icon(Icons.calendar_today_outlined),
+                onTap: _pickDate,
+              ),
+              ListTile(
+                title: const Text('وقت البدء'),
+                subtitle: Text(formatHm(_startTime)),
+                trailing: const Icon(Icons.access_time),
+                onTap: () => _pickTime(true),
+              ),
+              ListTile(
+                title: const Text('وقت الانتهاء'),
+                subtitle: Text(formatHm(_endTime)),
+                trailing: const Icon(Icons.access_time_filled),
+                onTap: () => _pickTime(false),
+              ),
+              const Divider(),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('التكرار', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              SegmentedButton<Recurrence>(
+                segments: const [
+                  ButtonSegment(value: Recurrence.none, label: Text('مرة واحدة')),
+                  ButtonSegment(value: Recurrence.daily, label: Text('يومياً')),
+                  ButtonSegment(value: Recurrence.weekly, label: Text('أيام محددة')),
+                ],
+                selected: {_recurrence},
+                onSelectionChanged: (s) => setState(() => _recurrence = s.first),
+              ),
+              if (_recurrence == Recurrence.weekly) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: kWeekdayOrder.map((d) {
+                    return FilterChip(
+                      label: Text(kWeekdayNames[d]!),
+                      selected: _weekdays.contains(d),
+                      onSelected: (v) => setState(() {
+                        if (v) {
+                          _weekdays.add(d);
+                        } else {
+                          _weekdays.remove(d);
+                        }
+                      }),
+                    );
+                  }).toList(),
+                ),
+              ],
+              const Divider(height: 32),
+              const Text('المهام الفرعية', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ..._subs.map((s) {
+                return Row(
+                  children: [
+                    Checkbox(
+                      value: s.done,
+                      onChanged: (v) => setState(() => s.done = v ?? false),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: s.controller,
+                        decoration: const InputDecoration(
+                          hintText: 'خطوة صغيرة...',
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.redAccent),
+                      onPressed: () => setState(() => _subs.remove(s)),
+                    ),
+                  ],
+                );
+              }),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(
+                  onPressed: _addSub,
+                  icon: const Icon(Icons.add),
+                  label: const Text('إضافة مهمة فرعية'),
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2E7D32),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: const Text('حفظ المهمة', style: TextStyle(fontSize: 16)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
